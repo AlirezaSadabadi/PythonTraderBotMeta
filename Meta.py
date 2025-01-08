@@ -115,6 +115,22 @@ class Meta:
                 return 0, 0
             else:
                 return tp, sl
+    '''
+    مواردی که استاپ لاس توسط مکانیزم هایی نظیر
+    atr
+    محاسبه می شود و فقط تفاوت حد ضرر و سود از قیمت اصلی
+    ارسال می شود توسط این تابع مقدار اصلی حد ضرر محاسبه می گردد
+    '''
+    def StopLossTakeProfitFromVar(symbol='BITCOIN', buy=True, vartp=0, varsl=0):
+        if buy:
+            price = mt5.symbol_info(symbol).ask 
+            tp = price + vartp
+            sl = price - varsl
+        else:                
+            price = mt5.symbol_info(symbol).bid
+            tp = price - vartp
+            sl = price + varsl
+        return tp, sl
                
     def SendOrder(symbol, lot, buy, sell, ticket=None,pct_tp=0.02, pct_sl=0.01, comment="No specific comment", magic=0):    
 
@@ -142,8 +158,11 @@ class Meta:
 
         #OPEN A buy TRADE
         if buy and ticket==None:
+            # استراتژی هایی که استاپ لاس آن ها با مکانیزم نظیر
+            # atr
+            # محاسبه می شود به تابع دیگری ارجاع می شود
             if magic == 5:
-                tp, sl = pct_tp, pct_sl
+                tp, sl = Meta.StopLossTakeProfitFromVar(symbol, True, pct_tp, pct_sl)
             else:
                 tp, sl = Meta.RiskReward(symbol, buy=True, risk=pct_sl, reward=pct_tp)
             
@@ -162,7 +181,7 @@ class Meta:
                 "type_time": mt5.ORDER_TIME_GTC}
 
                 #برای بعضی از استراتژی ها تیک پروفیت می گذارم
-                if magic == 5:
+                if magic == 5 or magic == 1000:
                     request['tp']=tp
             
                 result = mt5.order_send(request)
@@ -175,7 +194,7 @@ class Meta:
         #OPEN A sell TRADE        
         if sell and ticket==None:
             if magic == 5:
-                tp, sl = pct_tp, pct_sl
+                tp, sl = Meta.StopLossTakeProfitFromVar(symbol, False, pct_tp, pct_sl)
             else:
                 tp, sl = Meta.RiskReward(symbol, buy=False, risk=pct_sl, reward=pct_tp)
             try:
@@ -192,7 +211,7 @@ class Meta:
                 "type_filling": filling_type,
                 "type_time": mt5.ORDER_TIME_GTC}
 
-                if magic == 5:
+                if magic == 5 or magic == 1000:
                     request['tp']=tp
             
                 result = mt5.order_send(request)
@@ -270,7 +289,7 @@ class Meta:
         
         return summary    
     
-    def TrailingStopLoss():
+    def TrailingStopLoss(magicList):
         Meta.summary = Meta.resume()
         if Meta.summary.shape[0] >0:
             for i in range(Meta.summary.shape[0]):
@@ -280,84 +299,82 @@ class Meta:
                 # اگر اینکار رو نکنیم تی پی
                 # توسط تغییر استاپ لاس سفارش پاک می شود
                 tp = row["tp"]
-                magic = row['magic']  
-
-                """ تغییر پویای استاپ لاس برای سفارش های خرید """
-                if row["position"] == 0:
-                    try:
-                        if (symbol not in Meta.maxPrice.keys()):
-                            Meta.maxPrice[symbol]={}
-                        if (magic not in Meta.maxPrice[symbol].keys()):
-                            Meta.maxPrice[symbol][magic]=row["price"]                        
-                        current_price = (mt5.symbol_info(symbol).ask + mt5.symbol_info(symbol).bid ) / 2
-                        from_sl_to_curent_price = current_price - row["sl"]
-                        from_sl_to_max_price = Meta.maxPrice[symbol][magic] - row["sl"]
-                        if current_price > Meta.maxPrice[symbol][magic]:
-                            Meta.maxPrice[symbol][magic] = current_price
-                        if from_sl_to_curent_price > from_sl_to_max_price:
-                            difference = from_sl_to_curent_price - from_sl_to_max_price
-                            filling_type=Meta.FindFillingMode(symbol)
-                            # point = mt5.symbol_info(symbol).point
-                            request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "symbol": symbol,
-                            "position": row["ticket"],
-                            "volume": row["volume"],
-                            "type": mt5.ORDER_TYPE_BUY,
-                            "price": row["price"],
-                            "tp": tp,
-                            "sl": row["sl"] + difference,
-                            "type_filling": filling_type,
-                            "type_time": mt5.ORDER_TIME_GTC,
-                            }
-                            # برای چندلر نیاز به تریلینگ نداریم              
-                            if magic != 4:
+                magic = row['magic'] 
+                # گرانول ریز کردن تریلینگ
+                # اینگونه تریلینگ فقط برای استراتژی خاصی که آنرا صدا زده اجرا می شود 
+                if magic in magicList:
+                    """ تغییر پویای استاپ لاس برای سفارش های خرید """
+                    if row["position"] == 0:
+                        try:
+                            if (symbol not in Meta.maxPrice.keys()):
+                                Meta.maxPrice[symbol]={}
+                            if (magic not in Meta.maxPrice[symbol].keys()):
+                                Meta.maxPrice[symbol][magic]=row["price"]                        
+                            current_price = (mt5.symbol_info(symbol).ask + mt5.symbol_info(symbol).bid ) / 2
+                            from_sl_to_curent_price = current_price - row["sl"]
+                            from_sl_to_max_price = Meta.maxPrice[symbol][magic] - row["sl"]
+                            if current_price > Meta.maxPrice[symbol][magic]:
+                                Meta.maxPrice[symbol][magic] = current_price
+                            if from_sl_to_curent_price > from_sl_to_max_price:
+                                difference = from_sl_to_curent_price - from_sl_to_max_price
+                                filling_type=Meta.FindFillingMode(symbol)
+                                # point = mt5.symbol_info(symbol).point
+                                request = {
+                                "action": mt5.TRADE_ACTION_SLTP,
+                                "symbol": symbol,
+                                "position": row["ticket"],
+                                "volume": row["volume"],
+                                "type": mt5.ORDER_TYPE_BUY,
+                                "price": row["price"],
+                                "tp": tp,
+                                "sl": row["sl"] + difference,
+                                "type_filling": filling_type,
+                                "type_time": mt5.ORDER_TIME_GTC,
+                                }
                                 information = mt5.order_send(request)
-                                print(f"Buy StopLoss Trailling\tsymbol:{symbol}\tmagic:{magic}\torder:{row['ticket']}\tprice:{information.request.price}\tSL:{information.request.sl}")
-                    except BaseException as e:
-                        print(f"An exception has occurred in Meta.trailling_stop_loss buy order :{str(e)}")
+                                print(f"Buy StopLoss Trailing\tsymbol:{symbol}\tmagic:{magic}\torder:{row['ticket']}\tprice:{information.request.price}\tSL:{information.request.sl}")
+                        except BaseException as e:
+                            print(f"An exception has occurred in Meta.Trailing_stop_loss buy order :{str(e)}")
 
-                """ تغییر پویای استاپ لاس برای سفارش های فروش """
-                if row["position"] == 1:
-                    try:
-                        if symbol not in Meta.minPrice.keys():
-                            Meta.minPrice[symbol]={}
-                        if (magic not in Meta.minPrice[symbol].keys()):
-                            Meta.minPrice[symbol][magic]=row["price"]
-                        current_price = (mt5.symbol_info(symbol).ask + mt5.symbol_info(symbol).bid ) / 2
-                        from_sl_to_curent_price = row["sl"] - current_price
-                        from_sl_to_min_price = row["sl"] - Meta.minPrice[symbol][magic]
-                        if current_price < Meta.minPrice[symbol][magic]:
-                            Meta.minPrice[symbol][magic] = current_price
-                        if from_sl_to_curent_price > from_sl_to_min_price:
-                            difference = from_sl_to_curent_price - from_sl_to_min_price 
-                            filling_type = mt5.symbol_info(symbol).filling_mode
-                            # point = mt5.symbol_info(symbol).point
-                            request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "symbol": symbol,
-                            "position": row["ticket"],
-                            "volume": row["volume"],
-                            "type": mt5.ORDER_TYPE_SELL,
-                            "price": row["price"],
-                            "tp":tp,
-                            "sl": row["sl"] - difference,
-                            "type_filling": filling_type,
-                            "type_time": mt5.ORDER_TIME_GTC,
-                            }
-                            # برای چندلر نیاز به تریلینگ نداریم              
-                            if magic != 4:
+                    """ تغییر پویای استاپ لاس برای سفارش های فروش """
+                    if row["position"] == 1:
+                        try:
+                            if symbol not in Meta.minPrice.keys():
+                                Meta.minPrice[symbol]={}
+                            if (magic not in Meta.minPrice[symbol].keys()):
+                                Meta.minPrice[symbol][magic]=row["price"]
+                            current_price = (mt5.symbol_info(symbol).ask + mt5.symbol_info(symbol).bid ) / 2
+                            from_sl_to_curent_price = row["sl"] - current_price
+                            from_sl_to_min_price = row["sl"] - Meta.minPrice[symbol][magic]
+                            if current_price < Meta.minPrice[symbol][magic]:
+                                Meta.minPrice[symbol][magic] = current_price
+                            if from_sl_to_curent_price > from_sl_to_min_price:
+                                difference = from_sl_to_curent_price - from_sl_to_min_price 
+                                filling_type = mt5.symbol_info(symbol).filling_mode
+                                # point = mt5.symbol_info(symbol).point
+                                request = {
+                                "action": mt5.TRADE_ACTION_SLTP,
+                                "symbol": symbol,
+                                "position": row["ticket"],
+                                "volume": row["volume"],
+                                "type": mt5.ORDER_TYPE_SELL,
+                                "price": row["price"],
+                                "tp":tp,
+                                "sl": row["sl"] - difference,
+                                "type_filling": filling_type,
+                                "type_time": mt5.ORDER_TIME_GTC,
+                                }                                
                                 information = mt5.order_send(request)
-                                print(f"Sell StopLoss Trailling\t{symbol}\tmagic:{magic}\torder:{row['ticket']}\tprice:{information.request.price}\tSL:{information.request.sl}")
-                    except BaseException as e:
-                        print(f"An exception has occurred in Meta.trailling_stop_loss sell order :{str(e)}")
+                                print(f"Sell StopLoss Trailing\t{symbol}\tmagic:{magic}\torder:{row['ticket']}\tprice:{information.request.price}\tSL:{information.request.sl}")
+                        except BaseException as e:
+                            print(f"An exception has occurred in Meta.Trailing_stop_loss sell order :{str(e)}")
                         
-    def VerifyTSL():
+    def VerifyTSL(magicList):
         #print("MAX", Meta.maxPrice)
         #print("MIN", Meta.minPrice)
         if len(Meta.summary)>0:
-            buy_open_positions_symbols = Meta.summary.loc[Meta.summary["position"]==0]["symbol"]
-            sell_open_positions_symbols = Meta.summary.loc[Meta.summary["position"]==1]["symbol"]
+            buy_open_positions_symbols = Meta.summary.loc[(Meta.summary["position"]==0) & (Meta.summary["magic"].isin(magicList))]["symbol"]
+            sell_open_positions_symbols = Meta.summary.loc[(Meta.summary["position"]==1) & (Meta.summary["magic"].isin(magicList))]["symbol"]
             # distinct (unique) the list's items
             buy_open_positions_symbols = list(set(buy_open_positions_symbols))
             sell_open_positions_symbols = list(set(sell_open_positions_symbols))
@@ -367,7 +384,7 @@ class Meta:
         
         if len(buy_open_positions_symbols)>0:
             for symbol in buy_open_positions_symbols:
-                magicBuySymbol = Meta.summary.loc[(Meta.summary["position"]==0) & (Meta.summary["symbol"]==symbol)]["magic"]
+                magicBuySymbol = Meta.summary.loc[(Meta.summary["position"]==0) & (Meta.summary["symbol"]==symbol) & (Meta.summary["magic"].isin(magicList))]["magic"]
 
                 # اگر یک پوزیشن خرید به صورت دستی بسته شود یا استاپ لاس آن بخورد
                 # بایستی مقادیر ماکزیمم آن در دیکشنری نیز حذف گردد
@@ -396,7 +413,7 @@ class Meta:
 
         if len(sell_open_positions_symbols)>0:
             for symbol in sell_open_positions_symbols:
-                magicSellSymbol = Meta.summary.loc[(Meta.summary["position"]==1) & (Meta.summary["symbol"]==symbol)]["magic"]
+                magicSellSymbol = Meta.summary.loc[(Meta.summary["position"]==1) & (Meta.summary["symbol"]==symbol) & (Meta.summary["magic"].isin(magicList))]["magic"]
 
                 if len(Meta.minPrice[symbol]) != len(magicSellSymbol) and len(magicSellSymbol) >0:
                     magic_to_delete = []
